@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+
+require File.dirname(__FILE__) + '/../lib/tunl'
+require 'thor'
+
+module Tunl
+	
+	class CLI < Thor
+		
+		desc "start <host>", "launch tunnel on host.4ppz.com"
+		method_options :check => :string, :port => :string
+		def start(host)                 
+			node = task('Launch instance') { TunnelNode.launch(host) }
+			task('Acquire hostname') { node.acquire_hostname }	
+			task('Wait for ssh') { node.wait_for_ssh }
+			task('Attach nettica host') { node.attach_domain(host, '4ppz.com') }
+			task('Configure sshd') {
+				node.session.update_config_file('/etc/ssh/sshd_config', '# tunl tag', 'GatewayPorts clientspecified')
+				node.session.run('/etc/init.d/ssh restart')
+				nil
+			}
+			if uri = options[:check]
+				t = Thread.new do
+					loop do
+		        `curl http://#{host}.4ppz.com/#{uri} > /dev/null 2>&1`
+		        puts "."
+		        sleep 60
+		      end
+				end
+			end
+			port = options[:port] || 3000
+			
+			Davcro::KnownHostsFile.remove(node.ip)                                          
+			`ssh -i #{node.keypair.file} -v -N -p 22 root@#{node.ip} -R *:80:localhost:#{port}`
+		end
+		
+		desc "stop <host>", "destroy tunnel on host.4ppz.com"
+		def stop(host)
+			node = TunnelNode.find(host)
+			if node.nil?
+				abort("#{host}: no such node")
+			end  
+			task("#{host} scheduled for termination") { 
+				node.detach_domain(host, '4ppz.com')
+				TunnelNode.terminate(host, node) 
+				nil
+			} 
+		end
+		
+		desc "list", "list all tunnels"
+		def list
+			TunnelNode.all.each do |host, instance_id|
+				printf "%-12s %s\n", instance_id, host
+			end
+		end
+		
+		no_tasks do
+			def task(msg, &block)
+				printf "---> %-24s ", "#{msg}..."
+				start = Time.now
+				result = block.call || 'done'
+				finish = Time.now
+				time = sprintf("%0.1f", finish - start)
+				puts "#{result} (#{time}s)"
+				result
+			end
+		end
+		
+	end
+	
+end
+
+Tunl::CLI.start
