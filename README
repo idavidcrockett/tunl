@@ -4,6 +4,10 @@ Creates ssh tunnels on EC2
 
 === INSTALL
 
+- install dependencies:
+	sudo gem install thor
+	sudo gem install right_aws
+
 - run rake install to install the gem
 - create the tunl root directory ~/.tunl
   the tunl root directory will store aws params and ssh key pair's
