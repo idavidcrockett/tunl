@@ -7,63 +7,70 @@ module Tunl
 	
 	class CLI < Thor
 		
-		desc "start <host>", "launch tunnel on host.4ppz.com"
-		method_options :check => :string, :port => :string
-		def start(host)                 
-			node = task('Launch instance') { TunnelNode.launch(host) }
-			task('Acquire hostname') { node.acquire_hostname }	
-			task('Wait for ssh') { node.wait_for_ssh }
-			task('Attach nettica host') { node.attach_domain(host, '4ppz.com') }
-			task('Configure sshd') {
-				node.session.update_config_file('/etc/ssh/sshd_config', '# tunl tag', 'GatewayPorts clientspecified')
-				node.session.run('/etc/init.d/ssh restart')
-				nil
-			}
+		desc "start <name>", "launch named tunnel"
+		method_options :check => :string, :port => :string, :verbose => :boolean
+		def start(name)                 
+			printf("\n%-3s %-8s %-20s\n\n", '~~>', "Start", "Tunnel: #{name}")
+			tunl = Tunl::Base.new
+			tunl.setup_security_group(name)
+			tunl.setup_key_pair(name)
+			tunl.setup_instance(name)    
+			
+			instance = tunl.find_instance(name)
+			port = options[:port] || 3000
+			if options[:verbose]
+				verbose = "-v"
+			else
+				verbose = ''
+			end
+			
 			if uri = options[:check]
+				tunl.log("check", "#{instance[:dns_name]}#{uri}")
 				t = Thread.new do
 					loop do
-		        `curl http://#{host}.4ppz.com/#{uri} > /dev/null 2>&1`
-		        puts "."
-		        sleep 60
-		      end
+						`curl http://#{instance[:dns_name]}#{uri} > /dev/null 2>&1`
+							puts "."
+							sleep 60
+					end
 				end
 			end
-			port = options[:port] || 3000
-			
-			Davcro::KnownHostsFile.remove(node.ip)                                          
-			`ssh -i #{node.keypair.file} -v -N -p 22 root@#{node.ip} -R *:80:localhost:#{port}`
+			tunl.log("tunnel", "#{instance[:dns_name]}:80 -> localhost:#{port}")
+			puts "\n\n"
+			`ssh -i #{tunl.key_pair_filepath(name)} #{verbose} -N -p 22 root@#{instance[:dns_name]} -R *:80:localhost:#{port}`
 		end
 		
-		desc "stop <host>", "destroy tunnel on host.4ppz.com"
-		def stop(host)
-			node = TunnelNode.find(host)
-			if node.nil?
-				abort("#{host}: no such node")
-			end  
-			task("#{host} scheduled for termination") { 
-				node.detach_domain(host, '4ppz.com')
-				TunnelNode.terminate(host, node) 
-				nil
-			} 
+		desc "stop <name>", "terminate the named tunnel"
+		def stop(name)
+			tunl = Tunl::Base.new
+			if instance = tunl.find_instance(name)
+				printf("\n%-3s %-8s %-20s\n\n", '~~>', "Stop", "Tunnel: #{name}")
+				tunl.delete_instance(name)
+				tunl.delete_security_group(name)
+				tunl.delete_key_pair(name)
+				puts ""
+			else
+				puts "tunl #{name} not running"
+			end
 		end
 		
-		desc "list", "list all tunnels"
+		desc "list", "list all the tunnels"
 		def list
-			TunnelNode.all.each do |host, instance_id|
-				printf "%-12s %s\n", instance_id, host
+			tunl = Tunl::Base.new
+			instances = tunl.find_all_instances
+			if instances.size==0
+				puts "no running tunnels"
+			else
+				$stdout.printf("\n%-3s %-12s\n\n", '', 'Tunnels')
+				$stdout.printf("%-3s %-12s %-12s %-12s\n\n", '', 'Name', 'Aws Id', 'Host')
+				instances.each do |item|
+					$stdout.printf("%-3s %-12s %-12s %-12s\n", '', item[:aws_groups].first.gsub('tunl_', ''), item[:aws_instance_id], item[:dns_name])
+				end
+				$stdout.puts("\n\n")
 			end
 		end
 		
 		no_tasks do
-			def task(msg, &block)
-				printf "---> %-24s ", "#{msg}..."
-				start = Time.now
-				result = block.call || 'done'
-				finish = Time.now
-				time = sprintf("%0.1f", finish - start)
-				puts "#{result} (#{time}s)"
-				result
-			end
+
 		end
 		
 	end

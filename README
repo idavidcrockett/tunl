@@ -1,0 +1,16 @@
+=== Tunl
+
+Creates ssh tunnels on EC2
+
+=== INSTALL
+
+- run rake install to install the gem
+- create the tunl root directory ~/.tunl
+  the tunl root directory will store aws params and ssh key pair's
+- create the tunl config file: ~/.tunl/tunl.yml and set your aws params
+
+
+=== USAGE
+
+execute tunl -h for usage instructions
+
